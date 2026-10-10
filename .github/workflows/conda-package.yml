@@ -1,0 +1,140 @@
+# Reusable workflow: build a repo's conda package and publish it to prefix.dev.
+#
+# Finds the package the same way in every repo:
+#   1. pixi.toml with a [package] table  -> pixi build
+#   2. recipe.yaml or recipe/recipe.yaml -> rattler-build
+# Repos with neither pass through green (nothing to package).
+#
+# Publishes only on pushes to the default branch of a nandi-conda repo, using the
+# org's PREFIX_API_KEY secret (pass `secrets: inherit`), or trusted publishing
+# (OIDC) when that secret is absent.
+name: Conda package
+
+on:
+  workflow_call:
+    inputs:
+      channel:
+        description: prefix.dev channel to publish to
+        type: string
+        default: nandi-testing
+      recipe:
+        description: Recipe path, if auto-detection picks the wrong one
+        type: string
+        default: ""
+      build-channels:
+        description: Space-separated channels for rattler-build recipes (pixi builds use pixi.toml's)
+        type: string
+        default: conda-forge
+      pre-build:
+        description: Shell commands to run before packaging (default runs ci/pre-package.sh if it exists)
+        type: string
+        default: ""
+      flutter:
+        description: Install stable Flutter (plus Linux desktop build deps) before the pre-build step
+        type: boolean
+        default: false
+      copy-deps:
+        description: Also upload the conda-forge runtime dependencies, so the channel installs on its own
+        type: boolean
+        default: true
+    secrets:
+      PREFIX_API_KEY:
+        required: false
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # prefix.dev trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect package
+        id: detect
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.recipe }}" ]; then
+            echo "kind=recipe" >> "$GITHUB_OUTPUT"; echo "recipe=${{ inputs.recipe }}" >> "$GITHUB_OUTPUT"
+          elif [ -f pixi.toml ] && grep -qE '^\[package\]' pixi.toml; then
+            echo "kind=pixi" >> "$GITHUB_OUTPUT"
+          elif [ -f recipe.yaml ]; then
+            echo "kind=recipe" >> "$GITHUB_OUTPUT"; echo "recipe=recipe.yaml" >> "$GITHUB_OUTPUT"
+          elif [ -f recipe/recipe.yaml ]; then
+            echo "kind=recipe" >> "$GITHUB_OUTPUT"; echo "recipe=recipe/recipe.yaml" >> "$GITHUB_OUTPUT"
+          else
+            echo "kind=none" >> "$GITHUB_OUTPUT"
+            echo "::notice::No pixi.toml [package] or recipe.yaml found; nothing to package."
+          fi
+
+      - uses: prefix-dev/setup-pixi@5185adfbffb4bd703da3010310260805d89ebb11 # v0.9.6
+        if: steps.detect.outputs.kind != 'none'
+        with:
+          run-install: false
+
+      - name: Install Linux desktop build deps
+        if: steps.detect.outputs.kind != 'none' && inputs.flutter
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev
+      - uses: subosito/flutter-action@v2
+        if: steps.detect.outputs.kind != 'none' && inputs.flutter
+        with:
+          channel: stable
+          cache: true
+
+      # Repo-specific prep before packaging (e.g. building a Flutter bundle the
+      # recipe copies in): the `pre-build` input, else ci/pre-package.sh if present.
+      - name: Pre-build
+        if: steps.detect.outputs.kind != 'none'
+        shell: bash
+        env:
+          PRE_BUILD: ${{ inputs.pre-build }}
+        run: |
+          if [ -n "$PRE_BUILD" ]; then bash -euo pipefail -c "$PRE_BUILD"
+          elif [ -f ci/pre-package.sh ]; then bash ci/pre-package.sh
+          fi
+
+      - name: Build (pixi build)
+        if: steps.detect.outputs.kind == 'pixi'
+        run: pixi build --output-dir output
+
+      - name: Build (rattler-build)
+        if: steps.detect.outputs.kind == 'recipe'
+        shell: bash
+        run: |
+          channels=()
+          for c in ${{ inputs.build-channels }}; do channels+=(-c "$c"); done
+          pixi exec rattler-build build --recipe "${{ steps.detect.outputs.recipe }}" "${channels[@]}" --output-dir output
+
+      - uses: actions/upload-artifact@v4
+        if: steps.detect.outputs.kind != 'none'
+        with:
+          name: conda-packages
+          path: output/**/*.conda
+
+      - uses: actions/checkout@v4
+        if: steps.detect.outputs.kind != 'none' && inputs.copy-deps
+        with:
+          repository: nandi-conda/ci
+          path: .nandi-ci
+
+      - name: Publish to prefix.dev/${{ inputs.channel }}
+        if: >-
+          steps.detect.outputs.kind != 'none' &&
+          github.event_name == 'push' &&
+          github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+          github.repository_owner == 'nandi-conda'
+        shell: bash
+        env:
+          PREFIX_API_KEY: ${{ secrets.PREFIX_API_KEY }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          # An empty PREFIX_API_KEY is sent as a (bad) key; unset it to fall back to OIDC.
+          [ -n "$PREFIX_API_KEY" ] || unset PREFIX_API_KEY
+          # Skips files already on the channel; bump the version or build number to publish a new build.
+          pixi exec rattler-build upload prefix -c "$CHANNEL" --skip-existing $(find output -name '*.conda')
+          if [ "${{ inputs.copy-deps }}" = true ]; then
+            .nandi-ci/scripts/fetch-deps.sh "$CHANNEL" deps output
+            if [ -n "$(ls deps)" ]; then pixi exec rattler-build upload prefix -c "$CHANNEL" --skip-existing deps/*; fi
+          fi
