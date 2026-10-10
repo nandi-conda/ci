@@ -33,6 +33,18 @@ on:
         description: Install stable Flutter (plus Linux desktop build deps) before the pre-build step
         type: boolean
         default: false
+      extra-packages:
+        description: Space-separated paths of more pixi packages in this repo to build (pixi build --path)
+        type: string
+        default: ""
+      cached-package:
+        description: Path of one slow pixi package to build only when its files change (cached by their hash)
+        type: string
+        default: ""
+      timeout-minutes:
+        description: Job timeout
+        type: number
+        default: 60
       copy-deps:
         description: Also upload the conda-forge runtime dependencies, so the channel installs on its own
         type: boolean
@@ -44,6 +56,7 @@ on:
 jobs:
   package:
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
       id-token: write # prefix.dev trusted publishing
@@ -106,6 +119,35 @@ jobs:
           channels=()
           for c in ${{ inputs.build-channels }}; do channels+=(-c "$c"); done
           pixi exec rattler-build build --recipe "${{ steps.detect.outputs.recipe }}" "${channels[@]}" --output-dir output
+
+      - name: Build extra packages
+        if: inputs.extra-packages != ''
+        shell: bash
+        run: |
+          for p in ${{ inputs.extra-packages }}; do
+            pixi build --path "$p" --output-dir output
+          done
+
+      - name: Restore cached package
+        id: cached
+        if: inputs.cached-package != ''
+        uses: actions/cache/restore@v4
+        with:
+          path: output-cached
+          key: pkg-${{ runner.os }}-${{ inputs.cached-package }}-${{ hashFiles(format('{0}/**', inputs.cached-package)) }}
+      - name: Build cached package
+        if: inputs.cached-package != '' && steps.cached.outputs.cache-hit != 'true'
+        run: pixi build --path "${{ inputs.cached-package }}" --output-dir output-cached
+      # Save right away so a failure in a later step doesn't throw the build away.
+      - name: Save cached package
+        if: inputs.cached-package != '' && steps.cached.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: output-cached
+          key: ${{ steps.cached.outputs.cache-primary-key }}
+      - name: Collect cached package
+        if: inputs.cached-package != ''
+        run: mkdir -p output && cp -r output-cached/. output/
 
       - uses: actions/upload-artifact@v4
         if: steps.detect.outputs.kind != 'none'
