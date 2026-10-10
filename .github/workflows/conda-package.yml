@@ -108,9 +108,11 @@ jobs:
           elif [ -f ci/pre-package.sh ]; then bash ci/pre-package.sh
           fi
 
+      # Build dirs live outside the checkout: backends that copy the source tree
+      # (pixi-build-nodejs) would otherwise copy the build prefix into itself.
       - name: Build (pixi build)
         if: steps.detect.outputs.kind == 'pixi'
-        run: pixi build --output-dir output
+        run: pixi build --output-dir output --build-dir "$RUNNER_TEMP/pixi-bld"
 
       - name: Build (rattler-build)
         if: steps.detect.outputs.kind == 'recipe'
@@ -125,7 +127,7 @@ jobs:
         shell: bash
         run: |
           for p in ${{ inputs.extra-packages }}; do
-            pixi build --path "$p" --output-dir output
+            pixi build --path "$p" --output-dir output --build-dir "$RUNNER_TEMP/pixi-bld-$(basename "$p")"
           done
 
       - name: Restore cached package
@@ -137,7 +139,7 @@ jobs:
           key: pkg-${{ runner.os }}-${{ inputs.cached-package }}-${{ hashFiles(format('{0}/**', inputs.cached-package)) }}
       - name: Build cached package
         if: inputs.cached-package != '' && steps.cached.outputs.cache-hit != 'true'
-        run: pixi build --path "${{ inputs.cached-package }}" --output-dir output-cached
+        run: pixi build --path "${{ inputs.cached-package }}" --output-dir output-cached --build-dir "$RUNNER_TEMP/pixi-bld-cached"
       # Save right away so a failure in a later step doesn't throw the build away.
       - name: Save cached package
         if: inputs.cached-package != '' && steps.cached.outputs.cache-hit != 'true'
