@@ -24,3 +24,12 @@ access to the channel), passed through by `secrets: inherit`. Without it,
 rattler-build falls back to prefix.dev trusted publishing (OIDC).
 
 Uploads use `--skip-existing`: bump the version or build number to publish a new build.
+
+## Mirrored conda-forge packages
+
+With `copy-deps`, conda-forge runtime deps are copied into the channel so it installs
+on its own. conda-forge corrects package metadata later through repodata patches that
+raw copies don't carry, so [`scripts/sync-mirror.py`](scripts/sync-mirror.py) writes
+conda-forge's current `depends`/`constrains` into each copy before upload. The
+[`sync-mirror.yml`](.github/workflows/sync-mirror.yml) workflow re-syncs copies already
+on the channel (weekly, or run it by hand) and checks that packages still solve.

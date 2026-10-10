@@ -178,5 +178,7 @@ jobs:
           pixi exec rattler-build upload prefix -c "$CHANNEL" --skip-existing $(find output -name '*.conda')
           if [ "${{ inputs.copy-deps }}" = true ]; then
             .nandi-ci/scripts/fetch-deps.sh "$CHANNEL" deps output
+            # Raw copies miss conda-forge's repodata patches; bake them into the copies.
+            if [ -n "$(ls deps)" ]; then pixi exec -s python=3.12 -s zstandard -- python .nandi-ci/scripts/sync-mirror.py --files deps/*; fi
             if [ -n "$(ls deps)" ]; then pixi exec rattler-build upload prefix -c "$CHANNEL" --skip-existing deps/*; fi
           fi

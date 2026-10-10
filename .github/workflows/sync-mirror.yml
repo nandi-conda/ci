@@ -1,0 +1,53 @@
+# Re-syncs conda-forge packages mirrored into the channel with conda-forge's
+# current metadata (repodata patches), then checks that packages still solve.
+name: Sync mirrored conda-forge packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: prefix.dev channel
+        default: nandi-testing
+      dry-run:
+        description: Only report what would change
+        type: boolean
+        default: false
+      check:
+        description: Space-separated packages that must solve from the channel afterwards
+        default: hexchat
+  schedule:
+    - cron: "17 4 * * 1"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      CHANNEL: ${{ inputs.channel || 'nandi-testing' }}
+      CHECK: ${{ inputs.check || 'hexchat' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: prefix-dev/setup-pixi@5185adfbffb4bd703da3010310260805d89ebb11 # v0.9.6
+        with:
+          run-install: false
+      - name: Sync metadata
+        env:
+          PREFIX_API_KEY: ${{ secrets.PREFIX_API_KEY }}
+        run: |
+          if [ -z "$PREFIX_API_KEY" ] && [ "${{ inputs.dry-run }}" != true ]; then
+            echo "::error::PREFIX_API_KEY is not available to nandi-conda/ci"; exit 1
+          fi
+          pixi exec -s python=3.12 -s zstandard -- python scripts/sync-mirror.py \
+            --channel "$CHANNEL" ${{ inputs.dry-run && '--dry-run' || '' }}
+      - name: Check packages solve
+        if: env.CHECK != ''
+        run: |
+          sleep 60  # let prefix.dev re-index the uploads
+          for channels in "\"https://prefix.dev/$CHANNEL\"" "\"https://prefix.dev/$CHANNEL\", \"conda-forge\""; do
+            for pkg in $CHECK; do
+              dir=$(mktemp -d)
+              printf '[workspace]\nname = "check"\nchannels = [%s]\nplatforms = ["linux-64"]\n[dependencies]\n%s = "*"\n' "$channels" "$pkg" > "$dir/pixi.toml"
+              echo "::group::$pkg from [$channels]"
+              pixi lock --manifest-path "$dir/pixi.toml"
+              echo "::endgroup::"
+            done
+          done
