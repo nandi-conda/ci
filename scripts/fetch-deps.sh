@@ -10,8 +10,9 @@ work=$(mktemp -d)
 mkdir -p "$dest"
 
 # Names of the packages we built; they are already uploaded to the channel.
+# Only linux-64 and noarch builds are solved below, so cross builds are left out.
 names=()
-for f in $(find "$@" -name '*.conda'); do
+for f in $(find "$@" -name '*.conda' -not -path '*/android-*' -not -path '*/ios-*'); do
   names+=("$(basename "$f" | sed -E 's/-[^-]+-[^-]+\.conda$//')")
 done
 

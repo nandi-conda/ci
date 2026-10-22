@@ -14,7 +14,7 @@ Copy [`templates/package.yml`](templates/package.yml) to `.github/workflows/pack
 Change behaviour for every repo by editing the reusable workflow here.
 
 Inputs (all optional): `channel` (default `nandi-testing`), `recipe` (override the
-detected path), `build-channels` (for rattler-build recipes, default `conda-forge`),
+detected path), `build-channels` (for rattler-build recipes, default `conda-forge`), `target-platforms` (extra platforms to cross-build a rattler-build recipe for, e.g. `android-aarch64`; tests are skipped for them),
 `pre-build` (shell commands run before packaging; by default `ci/pre-package.sh` runs if it exists), `flutter` (install stable Flutter and GTK build deps first), `extra-packages` (more pixi package paths to build), `cached-package` (one slow package path, rebuilt only when its files change), `timeout-minutes` (default 60), `copy-deps` (also upload conda-forge runtime deps, default `true`).
 
 ## Secrets

@@ -25,6 +25,10 @@ on:
         description: Space-separated channels for rattler-build recipes (pixi builds use pixi.toml's)
         type: string
         default: conda-forge
+      target-platforms:
+        description: Space-separated extra platforms to cross-build rattler-build recipes for (e.g. android-aarch64); tests are skipped for them
+        type: string
+        default: ""
       pre-build:
         description: Shell commands to run before packaging (default runs ci/pre-package.sh if it exists)
         type: string
@@ -121,6 +125,12 @@ jobs:
           channels=()
           for c in ${{ inputs.build-channels }}; do channels+=(-c "$c"); done
           pixi exec rattler-build build --recipe "${{ steps.detect.outputs.recipe }}" "${channels[@]}" --output-dir output
+          # Cross builds can't run the package, so their tests are skipped.
+          # Android recipes find the runner's preinstalled NDK through ANDROID_NDK_LATEST_HOME.
+          for p in ${{ inputs.target-platforms }}; do
+            pixi exec rattler-build build --recipe "${{ steps.detect.outputs.recipe }}" "${channels[@]}" --output-dir output \
+              --target-platform "$p" --test native
+          done
 
       - name: Build extra packages
         if: inputs.extra-packages != ''
