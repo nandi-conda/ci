@@ -20,7 +20,7 @@ on:
 
 jobs:
   sync:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     env:
       CHANNEL: ${{ inputs.channel || 'nandi-testing' }}
       CHECK: ${{ inputs.check || 'hexchat' }}
